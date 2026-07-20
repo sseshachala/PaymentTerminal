@@ -38,7 +38,7 @@ export default withAuth(
       authorized({ token, req }) {
         const { pathname } = req.nextUrl
         // Public routes
-        if (pathname.startsWith('/login') || pathname.startsWith('/api/auth')) return true
+        if (pathname.startsWith('/login') || pathname.startsWith('/register') || pathname.startsWith('/api/auth') || pathname.startsWith('/api/register')) return true
         // Everything else requires auth
         return !!token
       },

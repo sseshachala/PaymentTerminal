@@ -5,7 +5,7 @@ let _db: ReturnType<typeof postgres> | null = null
 function getDb() {
   if (!_db) {
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
-    _db = postgres(process.env.DATABASE_URL, { ssl: 'require' })
+    _db = postgres(process.env.DATABASE_URL, { ssl: 'require', prepare: false, max: 10 })
   }
   return _db
 }

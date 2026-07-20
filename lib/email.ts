@@ -2,8 +2,8 @@ import { Resend } from 'resend'
 import { sql } from './db'
 import { decrypt } from './encrypt'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-const FROM = process.env.RESEND_FROM!
+function getResend() { return new Resend(process.env.RESEND_API_KEY) }
+function FROM() { return process.env.RESEND_FROM! }
 
 async function getAdminEmails(): Promise<string[]> {
   const rows = await sql`SELECT email_enc FROM users WHERE role = 'admin'` as any[]
@@ -79,15 +79,15 @@ export async function sendSuccessEmails(details: SuccessDetails) {
   const sends: Promise<any>[] = []
 
   if (details.customerEmail) {
-    sends.push(resend.emails.send({
-      from: FROM, to: details.customerEmail, subject,
+    sends.push(getResend().emails.send({
+      from: FROM(), to: details.customerEmail, subject,
       html: successHtml(details, co, true),
     }))
   }
 
   const internalRecipients = [...new Set([details.agentEmail, ...adminEmails])]
-  sends.push(resend.emails.send({
-    from: FROM, to: internalRecipients,
+  sends.push(getResend().emails.send({
+    from: FROM(), to: internalRecipients,
     subject: `[Terminal] ${subject}`,
     html: successHtml(details, co, false),
   }))
@@ -98,8 +98,8 @@ export async function sendSuccessEmails(details: SuccessDetails) {
 export async function sendFailureEmails(details: FailureDetails) {
   const [adminEmails, co] = await Promise.all([getAdminEmails(), getCompanyInfo()])
   const internalRecipients = [...new Set([details.agentEmail, ...adminEmails])]
-  await resend.emails.send({
-    from: FROM, to: internalRecipients,
+  await getResend().emails.send({
+    from: FROM(), to: internalRecipients,
     subject: `[Terminal] Payment Failed — ${details.amountDisplay}`,
     html: failureHtml(details, co),
   }).catch(() => {})

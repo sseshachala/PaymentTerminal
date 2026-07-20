@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react'
 interface Transaction {
   id: string; amountDisplay: string; status: string
   createdAt: string; last4: string; cardBrand: string
-  customerName: string; accountName: string; agentName: string
+  customerName: string; accountName: string; accountProvider: string; agentName: string
 }
 
 type Period = 'today' | 'week' | 'month' | 'quarter'
@@ -117,7 +117,14 @@ function TransactionList() {
                         : 'bg-yellow-900/40 text-yellow-400 border border-yellow-800'
                     }`}>{tx.status}</span>
                   </td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">{tx.accountName}</td>
+                  <td className="px-4 py-3 text-gray-400 text-xs">
+                    <span>{tx.accountName}</span>
+                    {tx.accountProvider && (
+                      <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${tx.accountProvider === 'stripe' ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                        {tx.accountProvider}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">{tx.agentName}</td>
                   <td className="px-4 py-3 text-right">
                     {confirmDelete === tx.id ? (
