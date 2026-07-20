@@ -6,6 +6,47 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { loadStripe } from '@stripe/stripe-js'
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js'
 
+interface CustomerContext { summary: string; avgOrderCents: number; orderCount: number }
+
+function AiItemParser({ onItems }: { onItems: (items: LineItem[]) => void }) {
+  const [text, setText] = useState('')
+  const [parsing, setParsing] = useState(false)
+  const [error, setError] = useState('')
+
+  async function parse() {
+    if (!text.trim()) return
+    setParsing(true); setError('')
+    try {
+      const res = await fetch('/api/ai', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'parse-items', text }),
+      })
+      const data = await res.json()
+      if (!res.ok || !Array.isArray(data.items)) throw new Error()
+      onItems(data.items.map((i: any) => ({ description: String(i.description), qty: String(i.qty), unitPrice: String(i.unitPrice) })))
+      setText('')
+    } catch { setError('Could not parse — try again or enter manually') }
+    setParsing(false)
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-xs font-medium text-purple-400">AI Item Parser</label>
+      <div className="flex gap-2">
+        <input type="text" value={text} onChange={e => setText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), parse())}
+          placeholder='e.g. "3 brake pads at $45, 2 rotors at $120"'
+          className="flex-1 bg-gray-800 border border-purple-900 rounded-lg px-3 py-2 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        <button type="button" onClick={parse} disabled={parsing || !text.trim()}
+          className="px-3 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-sm rounded-lg transition-colors whitespace-nowrap">
+          {parsing ? '...' : 'Parse'}
+        </button>
+      </div>
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+    </div>
+  )
+}
+
 interface Customer {
   id: string; name: string; email?: string; phone?: string; company?: string
 }
@@ -24,8 +65,9 @@ interface AccountInfo {
 
 // ── Stripe charge form ────────────────────────────────────────────────────────
 
-function StripeChargeForm({ customer, accountId, taxRate, onSuccess, onReset }: {
+function StripeChargeForm({ customer, accountId, taxRate, customerContext, onSuccess, onReset }: {
   customer: Customer; accountId: string; taxRate: number
+  customerContext: CustomerContext | null
   onSuccess: (r: any) => void; onReset: () => void
 }) {
   const stripe = useStripe()
@@ -67,10 +109,18 @@ function StripeChargeForm({ customer, accountId, taxRate, onSuccess, onReset }: 
   }
 
   const { total } = calcTotals(items, taxRate, taxEnabled)
+  const isAnomalous = customerContext && customerContext.orderCount >= 3 &&
+    customerContext.avgOrderCents > 0 && total > (customerContext.avgOrderCents / 100) * 2
 
   return (
     <form onSubmit={handleCharge} className="space-y-5">
+      <AiItemParser onItems={setItems} />
       <LineItems items={items} onChange={setItems} taxRate={taxRate} taxEnabled={taxEnabled} onTaxToggle={setTaxEnabled} />
+      {isAnomalous && (
+        <p className="text-yellow-400 text-sm bg-yellow-900/20 border border-yellow-700 rounded-lg px-3 py-2">
+          ⚠ This order (${total.toFixed(2)}) is more than 2× the customer&apos;s average (${(customerContext!.avgOrderCents / 100).toFixed(2)}). Confirm before charging.
+        </p>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">Card Details</label>
         <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-3 focus-within:ring-2 focus-within:ring-blue-500">
@@ -96,9 +146,10 @@ function StripeChargeForm({ customer, accountId, taxRate, onSuccess, onReset }: 
 
 declare global { interface Window { Square: any } }
 
-function SquareChargeForm({ customer, accountId, applicationId, locationId, sandbox, taxRate, onSuccess, onReset }: {
+function SquareChargeForm({ customer, accountId, applicationId, locationId, sandbox, taxRate, customerContext, onSuccess, onReset }: {
   customer: Customer; accountId: string
   applicationId: string; locationId: string; sandbox: boolean; taxRate: number
+  customerContext: CustomerContext | null
   onSuccess: (r: any) => void; onReset: () => void
 }) {
   const [items, setItems] = useState<LineItem[]>([{ ...EMPTY_LINE_ITEM }])
@@ -174,10 +225,18 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
   }
 
   const { total } = calcTotals(items, taxRate, taxEnabled)
+  const isAnomalous = customerContext && customerContext.orderCount >= 3 &&
+    customerContext.avgOrderCents > 0 && total > (customerContext.avgOrderCents / 100) * 2
 
   return (
     <form onSubmit={handleCharge} className="space-y-5">
+      <AiItemParser onItems={setItems} />
       <LineItems items={items} onChange={setItems} taxRate={taxRate} taxEnabled={taxEnabled} onTaxToggle={setTaxEnabled} />
+      {isAnomalous && (
+        <p className="text-yellow-400 text-sm bg-yellow-900/20 border border-yellow-700 rounded-lg px-3 py-2">
+          ⚠ This order (${total.toFixed(2)}) is more than 2× the customer&apos;s average (${(customerContext!.avgOrderCents / 100).toFixed(2)}). Confirm before charging.
+        </p>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">Card Details</label>
         <div id="sq-card" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-3 min-h-[48px]" />
@@ -210,11 +269,12 @@ function Terminal() {
   const [searching, setSearching] = useState(false)
   const [loadingAccount, setLoadingAccount] = useState(false)
   const [accountError, setAccountError] = useState('')
-  const [showNewCustomer, setShowNewCustomer] = useState(false)
+  const [showNewCustomer, setShowNewCustomer] = useState(true)
   const [newCustomer, setNewCustomer] = useState<CustomerData>(EMPTY_CUSTOMER)
   const [creatingCustomer, setCreatingCustomer] = useState(false)
   const [createError, setCreateError] = useState('')
   const [taxRate, setTaxRate] = useState(0.0825)
+  const [customerContext, setCustomerContext] = useState<CustomerContext | null>(null)
   const searchTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
 
   useEffect(() => {
@@ -238,10 +298,15 @@ function Terminal() {
   async function initPayment(customer: Customer) {
     setSelectedCustomer(customer)
     setAccountError('')
+    setCustomerContext(null)
     setLoadingAccount(true)
-    const res = await fetch('/api/payment/init')
+    const [res, ctxRes] = await Promise.all([
+      fetch('/api/payment/init'),
+      fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'customer-context', customerId: customer.id }) }),
+    ])
     const data = await res.json()
     setLoadingAccount(false)
+    ctxRes.json().then(setCustomerContext).catch(() => {})
     if (!res.ok) { setAccountError(data.error); return }
     setAccountInfo(data)
     if (data.provider === 'stripe' && data.publishableKey) {
@@ -264,7 +329,7 @@ function Terminal() {
 
   function reset() {
     setSelectedCustomer(null); setAccountInfo(null); setStripePromise(null)
-    setSuccess(null); setSearch(''); setSearchResults([])
+    setSuccess(null); setSearch(''); setSearchResults([]); setCustomerContext(null)
   }
 
   if (success) {
@@ -350,6 +415,9 @@ function Terminal() {
           <div className="bg-gray-800 rounded-lg px-4 py-3 mb-5">
             <p className="text-white font-medium">{selectedCustomer.name}</p>
             {selectedCustomer.company && <p className="text-gray-400 text-sm">{selectedCustomer.company}</p>}
+            {customerContext && (
+              <p className="text-purple-400 text-xs mt-1">{customerContext.summary}</p>
+            )}
           </div>
           {loadingAccount && <p className="text-gray-400 text-sm">Selecting payment route...</p>}
           {accountError && <p className="text-red-400 text-sm">{accountError}</p>}
@@ -357,7 +425,7 @@ function Terminal() {
           {accountInfo?.provider === 'stripe' && stripePromise && (
             <Elements stripe={stripePromise}>
               <StripeChargeForm customer={selectedCustomer} accountId={accountInfo.accountId}
-                taxRate={taxRate} onSuccess={setSuccess} onReset={reset} />
+                taxRate={taxRate} customerContext={customerContext} onSuccess={setSuccess} onReset={reset} />
             </Elements>
           )}
 
@@ -365,7 +433,7 @@ function Terminal() {
             <SquareChargeForm customer={selectedCustomer} accountId={accountInfo.accountId}
               applicationId={accountInfo.applicationId} locationId={accountInfo.locationId}
               sandbox={accountInfo.sandbox ?? false}
-              taxRate={taxRate} onSuccess={setSuccess} onReset={reset} />
+              taxRate={taxRate} customerContext={customerContext} onSuccess={setSuccess} onReset={reset} />
           )}
         </div>
       )}
