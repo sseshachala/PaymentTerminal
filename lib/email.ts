@@ -78,13 +78,6 @@ export async function sendSuccessEmails(details: SuccessDetails) {
   const subject = `Payment Received — ${details.amountDisplay}`
   const sends: Promise<any>[] = []
 
-  if (details.customerEmail) {
-    sends.push(getResend().emails.send({
-      from: FROM(), to: details.customerEmail, subject,
-      html: successHtml(details, co, true),
-    }))
-  }
-
   const internalRecipients = [...new Set([details.agentEmail, ...adminEmails])]
   sends.push(getResend().emails.send({
     from: FROM(), to: internalRecipients,
