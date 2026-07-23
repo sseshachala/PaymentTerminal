@@ -16,14 +16,17 @@ export async function GET(req: NextRequest) {
     SELECT
       t.id, t.amount_cents, t.status, t.provider_tx_id, t.created_at,
       t.last4_enc, t.card_brand_enc,
+      COALESCE(SUM(r.amount_cents), 0)::int AS refunded_cents,
       c.name_enc  AS customer_name_enc,
       pa.name     AS account_name,
       pa.provider AS account_provider,
       u.name_enc  AS agent_name_enc
     FROM transactions t
+    LEFT JOIN refunds r ON r.transaction_id = t.id
     LEFT JOIN customers c ON c.id = t.customer_id
     LEFT JOIN payment_accounts pa ON pa.id = t.payment_account_id
     LEFT JOIN users u ON u.id = t.created_by
+    GROUP BY t.id, c.name_enc, pa.name, pa.provider, u.name_enc
     ORDER BY t.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   ` as any[]
@@ -34,6 +37,7 @@ export async function GET(req: NextRequest) {
     id: r.id,
     amountCents: r.amount_cents,
     amountDisplay: `$${(r.amount_cents / 100).toFixed(2)}`,
+    refundedCents: r.refunded_cents,
     status: r.status,
     providerTxId: r.provider_tx_id,
     createdAt: r.created_at,

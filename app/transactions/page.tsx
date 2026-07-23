@@ -3,7 +3,7 @@ import AppShell from '@/components/AppShell'
 import { useState, useEffect, useRef } from 'react'
 
 interface Transaction {
-  id: string; amountDisplay: string; status: string
+  id: string; amountCents: number; amountDisplay: string; refundedCents: number; status: string
   createdAt: string; last4: string; cardBrand: string
   customerName: string; accountName: string; accountProvider: string; agentName: string
 }
@@ -23,6 +23,10 @@ function TransactionList() {
   const [loading, setLoading] = useState(true)
   const [exportOpen, setExportOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [refundTarget, setRefundTarget] = useState<string | null>(null)
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refunding, setRefunding] = useState(false)
+  const [refundError, setRefundError] = useState('')
   const exportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -54,6 +58,29 @@ function TransactionList() {
       body: JSON.stringify({ id }),
     })
     setConfirmDelete(null)
+    loadPage()
+  }
+
+  function openRefund(tx: Transaction) {
+    const refundable = tx.amountCents - tx.refundedCents
+    setRefundTarget(tx.id)
+    setRefundAmount((refundable / 100).toFixed(2))
+    setRefundError('')
+  }
+
+  async function doRefund(id: string) {
+    setRefunding(true)
+    setRefundError('')
+    const amountCents = Math.round(parseFloat(refundAmount) * 100)
+    const res = await fetch(`/api/transactions/${id}/refund`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amountCents }),
+    })
+    const json = await res.json()
+    setRefunding(false)
+    if (!res.ok) { setRefundError(json.error ?? 'Refund failed'); return }
+    setRefundTarget(null)
     loadPage()
   }
 
@@ -96,7 +123,7 @@ function TransactionList() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
-                {['Date', 'Customer', 'Amount', 'Card', 'Status', 'Account', 'Agent', ''].map((h) => (
+                {['Date', 'Customer', 'Amount', 'Card', 'Status', 'Account', 'Agent', '', ''].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -108,7 +135,18 @@ function TransactionList() {
                     {new Date(tx.createdAt).toLocaleString()}
                   </td>
                   <td className="px-4 py-3 text-white">{tx.customerName}</td>
-                  <td className="px-4 py-3 text-white font-semibold">{tx.amountDisplay}</td>
+                  <td className="px-4 py-3">
+                    <span className="text-white font-semibold">{tx.amountDisplay}</span>
+                    {tx.refundedCents > 0 && (
+                      <span className={`ml-2 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                        tx.refundedCents >= tx.amountCents
+                          ? 'bg-orange-900/40 text-orange-400 border border-orange-800'
+                          : 'bg-yellow-900/40 text-yellow-400 border border-yellow-800'
+                      }`}>
+                        {tx.refundedCents >= tx.amountCents ? 'refunded' : `-$${(tx.refundedCents / 100).toFixed(2)}`}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-300 capitalize">{tx.cardBrand} ••••{tx.last4}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -126,6 +164,31 @@ function TransactionList() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">{tx.agentName}</td>
+                  <td className="px-4 py-3 text-right">
+                    {refundTarget === tx.id ? (
+                      <div className="flex items-center gap-2 justify-end">
+                        <span className="text-xs text-gray-400">$</span>
+                        <input
+                          type="number" step="0.01" min="0.01"
+                          value={refundAmount}
+                          onChange={e => setRefundAmount(e.target.value)}
+                          className="w-20 bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-xs text-white text-right focus:outline-none focus:border-blue-500"
+                        />
+                        {refundError && <span className="text-xs text-red-400">{refundError}</span>}
+                        <button onClick={() => doRefund(tx.id)} disabled={refunding}
+                          className="text-xs text-blue-400 hover:text-blue-300 font-medium transition-colors disabled:opacity-40">
+                          {refunding ? '...' : 'Refund'}
+                        </button>
+                        <button onClick={() => setRefundTarget(null)}
+                          className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Cancel</button>
+                      </div>
+                    ) : tx.status === 'succeeded' && tx.refundedCents < tx.amountCents ? (
+                      <button onClick={() => openRefund(tx)}
+                        className="text-xs text-gray-500 hover:text-blue-400 font-medium transition-colors">
+                        Refund
+                      </button>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3 text-right">
                     {confirmDelete === tx.id ? (
                       <div className="flex items-center gap-2 justify-end">
