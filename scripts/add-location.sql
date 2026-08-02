@@ -1,0 +1,1 @@
+ALTER TABLE payment_accounts ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT 'Main';

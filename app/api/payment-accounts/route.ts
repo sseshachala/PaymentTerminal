@@ -8,6 +8,7 @@ import { encrypt } from '@/lib/encrypt'
 const StripeSchema = z.object({
   provider: z.literal('stripe'),
   name: z.string().min(1).max(100),
+  location: z.string().min(1).max(60).default('Main'),
   publishableKey: z.string().startsWith('pk_'),
   secretKey: z.string().startsWith('sk_'),
   dailyLimitCents: z.number().int().min(10000).max(500000),
@@ -16,6 +17,7 @@ const StripeSchema = z.object({
 const SquareSchema = z.object({
   provider: z.literal('square'),
   name: z.string().min(1).max(100),
+  location: z.string().min(1).max(60).default('Main'),
   applicationId: z.string().min(1),
   accessToken: z.string().min(1),
   locationId: z.string().min(1),
@@ -34,18 +36,19 @@ export async function GET(req: NextRequest) {
   if (!session || !isAdmin(session)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const rows = await sql`
-    SELECT pa.id, pa.name, pa.provider, pa.publishable_key, pa.daily_limit_cents, pa.is_active, pa.created_at,
+    SELECT pa.id, pa.name, pa.location, pa.provider, pa.publishable_key, pa.daily_limit_cents, pa.is_active, pa.created_at,
       COALESCE((
         SELECT SUM(amount_cents) FROM transactions
         WHERE payment_account_id = pa.id AND status = 'succeeded' AND created_at::date = CURRENT_DATE
       ), 0)::int AS used_today_cents
     FROM payment_accounts pa
-    ORDER BY pa.created_at ASC
+    ORDER BY pa.location ASC, pa.created_at ASC
   ` as any[]
 
   return NextResponse.json(rows.map((r) => ({
     id: r.id,
     name: r.name,
+    location: r.location,
     provider: r.provider,
     publishableKey: r.publishable_key,
     dailyLimitCents: r.daily_limit_cents,
@@ -66,19 +69,17 @@ export async function POST(req: NextRequest) {
 
   if (d.provider === 'stripe') {
     const rows = await sql`
-      INSERT INTO payment_accounts (name, provider, publishable_key, secret_key_enc, daily_limit_cents)
-      VALUES (${d.name}, 'stripe', ${d.publishableKey}, ${encrypt(d.secretKey)}, ${d.dailyLimitCents})
+      INSERT INTO payment_accounts (name, location, provider, publishable_key, secret_key_enc, daily_limit_cents)
+      VALUES (${d.name}, ${d.location}, 'stripe', ${d.publishableKey}, ${encrypt(d.secretKey)}, ${d.dailyLimitCents})
       RETURNING id
     ` as any[]
     return NextResponse.json({ id: rows[0].id }, { status: 201 })
   }
 
-  // Square — applicationId stored as publishable_key (it's public), accessToken encrypted as secret_key_enc
-  // locationId + sandbox stored in extra_enc
   const extra = JSON.stringify({ locationId: d.locationId, sandbox: String(d.sandbox) })
   const rows = await sql`
-    INSERT INTO payment_accounts (name, provider, publishable_key, secret_key_enc, extra_enc, daily_limit_cents)
-    VALUES (${d.name}, 'square', ${d.applicationId}, ${encrypt(d.accessToken)}, ${encrypt(extra)}, ${d.dailyLimitCents})
+    INSERT INTO payment_accounts (name, location, provider, publishable_key, secret_key_enc, extra_enc, daily_limit_cents)
+    VALUES (${d.name}, ${d.location}, 'square', ${d.applicationId}, ${encrypt(d.accessToken)}, ${encrypt(extra)}, ${d.dailyLimitCents})
     RETURNING id
   ` as any[]
   return NextResponse.json({ id: rows[0].id }, { status: 201 })
@@ -88,7 +89,7 @@ export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session || !isAdmin(session)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const { id, isActive, name, dailyLimitCents } = await req.json()
+  const { id, isActive, name, location, dailyLimitCents } = await req.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   if (isActive !== undefined) {
@@ -96,6 +97,9 @@ export async function PATCH(req: NextRequest) {
   }
   if (name !== undefined) {
     await sql`UPDATE payment_accounts SET name = ${name} WHERE id = ${id}`
+  }
+  if (location !== undefined) {
+    await sql`UPDATE payment_accounts SET location = ${location} WHERE id = ${id}`
   }
   if (dailyLimitCents !== undefined) {
     await sql`UPDATE payment_accounts SET daily_limit_cents = ${dailyLimitCents} WHERE id = ${id}`

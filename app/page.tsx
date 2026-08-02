@@ -53,6 +53,8 @@ interface Customer {
 
 interface AccountInfo {
   accountId: string
+  name: string
+  location: string
   provider: 'stripe' | 'square'
   remaining: number
   // stripe
@@ -263,6 +265,8 @@ function Terminal() {
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<Customer[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const [availableAccounts, setAvailableAccounts] = useState<AccountInfo[]>([])
+  const [selectedLocation, setSelectedLocation] = useState<string | null>(null)
   const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null)
   const [stripePromise, setStripePromise] = useState<ReturnType<typeof loadStripe> | null>(null)
   const [success, setSuccess] = useState<any>(null)
@@ -299,6 +303,10 @@ function Terminal() {
     setSelectedCustomer(customer)
     setAccountError('')
     setCustomerContext(null)
+    setAvailableAccounts([])
+    setSelectedLocation(null)
+    setAccountInfo(null)
+    setStripePromise(null)
     setLoadingAccount(true)
     const [res, ctxRes] = await Promise.all([
       fetch('/api/payment/init'),
@@ -308,9 +316,19 @@ function Terminal() {
     setLoadingAccount(false)
     ctxRes.json().then(setCustomerContext).catch(() => {})
     if (!res.ok) { setAccountError(data.error); return }
-    setAccountInfo(data)
-    if (data.provider === 'stripe' && data.publishableKey) {
-      setStripePromise(loadStripe(data.publishableKey))
+    setAvailableAccounts(data.accounts)
+  }
+
+  function pickLocation(loc: string) {
+    setSelectedLocation(loc)
+    const inLoc = availableAccounts.filter(a => a.location === loc)
+    if (inLoc.length === 1) pickAccount(inLoc[0])
+  }
+
+  function pickAccount(a: AccountInfo) {
+    setAccountInfo(a)
+    if (a.provider === 'stripe' && a.publishableKey) {
+      setStripePromise(loadStripe(a.publishableKey))
     }
   }
 
@@ -328,7 +346,8 @@ function Terminal() {
   }
 
   function reset() {
-    setSelectedCustomer(null); setAccountInfo(null); setStripePromise(null)
+    setSelectedCustomer(null); setAvailableAccounts([]); setSelectedLocation(null)
+    setAccountInfo(null); setStripePromise(null)
     setSuccess(null); setSearch(''); setSearchResults([]); setCustomerContext(null)
   }
 
@@ -406,10 +425,17 @@ function Terminal() {
         </div>
       )}
 
-      {selectedCustomer && (
+      {selectedCustomer && (() => {
+        const locations = Array.from(new Set(availableAccounts.map(a => a.location)))
+        const inLoc = selectedLocation ? availableAccounts.filter(a => a.location === selectedLocation) : []
+        const stage = accountInfo ? 'card' : selectedLocation ? 'provider' : 'location'
+        const stepLabel = stage === 'card' ? 'Step 4 — Charge Card'
+          : stage === 'provider' ? 'Step 3 — Select Provider'
+          : 'Step 2 — Select Location'
+        return (
         <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Step 2 — Charge Card</h3>
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{stepLabel}</h3>
             <button onClick={reset} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Change customer</button>
           </div>
           <div className="bg-gray-800 rounded-lg px-4 py-3 mb-5">
@@ -419,8 +445,49 @@ function Terminal() {
               <p className="text-purple-400 text-xs mt-1">{customerContext.summary}</p>
             )}
           </div>
-          {loadingAccount && <p className="text-gray-400 text-sm">Selecting payment route...</p>}
+          {loadingAccount && <p className="text-gray-400 text-sm">Loading payment accounts...</p>}
           {accountError && <p className="text-red-400 text-sm">{accountError}</p>}
+
+          {stage === 'location' && locations.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              {locations.map((loc) => (
+                <button key={loc} type="button" onClick={() => pickLocation(loc)}
+                  className="px-4 py-6 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors text-center">
+                  <p className="text-white font-semibold text-lg">{loc}</p>
+                  <p className="text-gray-400 text-xs mt-1">
+                    {availableAccounts.filter(a => a.location === loc).length} account(s)
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {stage === 'provider' && (
+            <div className="space-y-2">
+              {inLoc.map((a) => (
+                <button key={a.accountId} type="button" onClick={() => pickAccount(a)}
+                  className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors flex items-center justify-between">
+                  <div>
+                    <p className="text-white font-medium capitalize">{a.provider} <span className="text-gray-500">·</span> <span className="text-gray-300">{a.name}</span></p>
+                    <p className="text-gray-400 text-xs mt-0.5">Remaining today: ${(a.remaining / 100).toFixed(2)}</p>
+                  </div>
+                  <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                    a.provider === 'stripe' ? 'bg-purple-900/40 text-purple-300' : 'bg-blue-900/40 text-blue-300'
+                  }`}>{a.provider}</span>
+                </button>
+              ))}
+              <button onClick={() => setSelectedLocation(null)}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors mt-2">← Change location</button>
+            </div>
+          )}
+
+          {stage === 'card' && accountInfo && (
+            <div className="mb-4 flex items-center justify-between text-xs">
+              <span className="text-gray-400">Using <span className="text-white">{accountInfo.location} · {accountInfo.name}</span> ({accountInfo.provider})</span>
+              <button onClick={() => { setAccountInfo(null); setStripePromise(null); if (inLoc.length <= 1) setSelectedLocation(null) }}
+                className="text-gray-500 hover:text-gray-300 transition-colors">Change</button>
+            </div>
+          )}
 
           {accountInfo?.provider === 'stripe' && stripePromise && (
             <Elements stripe={stripePromise}>
@@ -436,7 +503,8 @@ function Terminal() {
               taxRate={taxRate} customerContext={customerContext} onSuccess={setSuccess} onReset={reset} />
           )}
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

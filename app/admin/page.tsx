@@ -5,13 +5,14 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 
 interface PaymentAccount {
-  id: string; name: string; provider: string; publishableKey: string
+  id: string; name: string; location: string; provider: string; publishableKey: string
   dailyLimitCents: number; usedTodayCents: number; isActive: boolean
 }
 
 interface Settings {
   tax_rate: string
   logo_url: string
+  locations: string
   company_name: string
   company_address1: string
   company_address2: string
@@ -23,10 +24,14 @@ interface Settings {
 }
 
 const EMPTY_SETTINGS: Settings = {
-  tax_rate: '8.25', logo_url: '',
+  tax_rate: '8.25', logo_url: '', locations: 'Main',
   company_name: '', company_address1: '', company_address2: '',
   company_city: '', company_state: '', company_zip: '',
   company_phone: '', company_email: '',
+}
+
+function parseLocations(csv: string): string[] {
+  return csv.split(',').map(s => s.trim()).filter(Boolean)
 }
 
 function AdminContent() {
@@ -42,7 +47,7 @@ function AdminContent() {
   const [loading, setLoading] = useState(true)
   const [provider, setProvider] = useState<'stripe' | 'square'>('stripe')
   const [form, setForm] = useState({
-    name: '', dailyLimitCents: 100000,
+    name: '', location: 'Main', dailyLimitCents: 100000,
     // stripe
     publishableKey: '', secretKey: '',
     // square
@@ -67,6 +72,7 @@ function AdminContent() {
     setSettings({
       tax_rate: d.tax_rate ? String(parseFloat(d.tax_rate) * 100) : '8.25',
       logo_url: d.logo_url ?? '',
+      locations: d.locations ?? 'Main',
       company_name: d.company_name ?? '',
       company_address1: d.company_address1 ?? '',
       company_address2: d.company_address2 ?? '',
@@ -80,12 +86,20 @@ function AdminContent() {
 
   useEffect(() => { load(); loadSettings() }, [])
 
+  const locationOptions = parseLocations(settings.locations)
+
+  useEffect(() => {
+    if (locationOptions.length && !locationOptions.includes(form.location)) {
+      setForm(p => ({ ...p, location: locationOptions[0] }))
+    }
+  }, [settings.locations])
+
   async function addAccount(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true); setError('')
     const payload = provider === 'stripe'
-      ? { provider, name: form.name, publishableKey: form.publishableKey, secretKey: form.secretKey, dailyLimitCents: form.dailyLimitCents }
-      : { provider, name: form.name, applicationId: form.applicationId, accessToken: form.accessToken, locationId: form.locationId, sandbox: form.sandbox, dailyLimitCents: form.dailyLimitCents }
+      ? { provider, name: form.name, location: form.location, publishableKey: form.publishableKey, secretKey: form.secretKey, dailyLimitCents: form.dailyLimitCents }
+      : { provider, name: form.name, location: form.location, applicationId: form.applicationId, accessToken: form.accessToken, locationId: form.locationId, sandbox: form.sandbox, dailyLimitCents: form.dailyLimitCents }
     const res = await fetch('/api/payment-accounts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -93,7 +107,7 @@ function AdminContent() {
     const data = await res.json()
     setSaving(false)
     if (!res.ok) { setError(JSON.stringify(data.error)); return }
-    setForm({ name: '', dailyLimitCents: 100000, publishableKey: '', secretKey: '', applicationId: '', accessToken: '', locationId: '', sandbox: false })
+    setForm({ name: '', location: 'Main', dailyLimitCents: 100000, publishableKey: '', secretKey: '', applicationId: '', accessToken: '', locationId: '', sandbox: false })
     load()
   }
 
@@ -122,7 +136,7 @@ function AdminContent() {
     load()
   }
 
-  async function updateAccount(id: string, patch: { name?: string; dailyLimitCents?: number }) {
+  async function updateAccount(id: string, patch: { name?: string; location?: string; dailyLimitCents?: number }) {
     await fetch('/api/payment-accounts', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, ...patch }),
@@ -148,7 +162,7 @@ function AdminContent() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
-                {['Name', 'Provider', 'Daily Limit', 'Used Today', 'Status', ''].map((h) => (
+                {['Name', 'Location', 'Provider', 'Daily Limit', 'Used Today', 'Status', ''].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase">{h}</th>
                 ))}
               </tr>
@@ -166,6 +180,16 @@ function AdminContent() {
                         onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
                         className="bg-transparent text-white font-medium w-full focus:outline-none focus:bg-gray-800 focus:px-2 rounded transition-all"
                       />
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={locationOptions.includes(a.location) ? a.location : ''}
+                        onChange={(e) => updateAccount(a.id, { location: e.target.value })}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        {!locationOptions.includes(a.location) && <option value="">{a.location}</option>}
+                        {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                      </select>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
@@ -230,8 +254,16 @@ function AdminContent() {
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <Field label="Account Name" required value={form.name} onChange={(v) => setForm(p => ({ ...p, name: v }))} placeholder="Account A" />
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1">Location</label>
+              <select value={form.location} onChange={(e) => setForm(p => ({ ...p, location: e.target.value }))}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {locationOptions.length === 0 && <option value="">Add locations in Settings</option>}
+                {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+              </select>
+            </div>
             <Field label="Daily Limit ($)" type="number" required
               value={String(form.dailyLimitCents / 100)}
               onChange={(v) => setForm(p => ({ ...p, dailyLimitCents: Math.round(parseFloat(v) * 100) }))}
@@ -302,6 +334,14 @@ function AdminContent() {
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <Field label="Logo URL" value={settings.logo_url} onChange={set('logo_url')} placeholder="https://..." />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1">Locations (comma-separated)</label>
+            <input type="text" value={settings.locations} onChange={(e) => set('locations')(e.target.value)}
+              placeholder="Main, LA"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <p className="text-xs text-gray-500 mt-1">Agents pick from this list at checkout. Each payment account is assigned to one.</p>
           </div>
 
           <div className="flex items-center gap-4 pt-1">
