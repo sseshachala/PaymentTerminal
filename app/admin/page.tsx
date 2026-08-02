@@ -149,7 +149,7 @@ function AdminContent() {
   if (user?.role !== 'admin') return null
 
   return (
-    <div className="p-8 max-w-3xl mx-auto space-y-8">
+    <div className="p-8 max-w-6xl mx-auto space-y-8">
       <h2 className="text-xl font-bold text-white">Admin Settings</h2>
 
       {/* Stripe Accounts list */}
