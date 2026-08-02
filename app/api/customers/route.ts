@@ -5,22 +5,13 @@ import { authOptions } from '@/lib/auth'
 import { sql } from '@/lib/db'
 import { encrypt, encryptMaybe, decrypt, decryptMaybe, hmac } from '@/lib/encrypt'
 
-const usPhone = z.string().refine(
-  (v) => v.replace(/\D/g, '').length === 10,
-  { message: 'Must be a 10-digit US phone number' }
-)
-
 const CreateSchema = z.object({
   name: z.string().min(1).max(200).trim(),
-  email: z.string().email(),
-  phone: usPhone,
-  company: z.string().max(200).optional(),
-  address1: z.string().min(1).max(300),
-  address2: z.string().max(300).optional(),
-  city: z.string().min(1).max(100),
-  state: z.string().min(2).max(2),
-  zip: z.string().min(5).max(5),
-  notes: z.string().max(2000).optional(),
+  email: z.string().email().optional().or(z.literal('')),
+  phone: z.string().optional().or(z.literal('')).refine(
+    (v) => !v || v.replace(/\D/g, '').length === 10,
+    { message: 'Must be a 10-digit US phone number' }
+  ),
 })
 
 // GET /api/customers?q=search
@@ -65,26 +56,23 @@ export async function POST(req: NextRequest) {
   const parsed = CreateSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { name, email, phone, company, address1, address2, city, state, zip, notes } = parsed.data
-
-  const addressJson = JSON.stringify({ address1, address2, city, state, zip })
+  const { name } = parsed.data
+  const email = parsed.data.email || undefined
+  const phone = parsed.data.phone || undefined
 
   const rows = await sql`
-    INSERT INTO customers (name_enc, name_hmac, email_enc, email_hmac, phone_enc, company_enc, address_enc, notes_enc)
+    INSERT INTO customers (name_enc, name_hmac, email_enc, email_hmac, phone_enc)
     VALUES (
       ${encrypt(name)},
       ${hmac(name)},
-      ${encrypt(email)},
-      ${hmac(email)},
-      ${encrypt(phone)},
-      ${encryptMaybe(company)},
-      ${encrypt(addressJson)},
-      ${encryptMaybe(notes)}
+      ${encryptMaybe(email)},
+      ${email ? hmac(email) : null},
+      ${encryptMaybe(phone)}
     )
     RETURNING id
   ` as any[]
 
-  return NextResponse.json({ id: rows[0].id, name, email, phone, company, address1, city, state, zip }, { status: 201 })
+  return NextResponse.json({ id: rows[0].id, name, email, phone }, { status: 201 })
 }
 
 export async function DELETE(req: NextRequest) {
