@@ -24,7 +24,7 @@ export async function stripeCharge(p: StripeChargeParams): Promise<ChargeResult>
     payment_method: p.paymentMethodId,
     confirm: true,
     automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
-    payment_method_options: { card: { request_three_d_secure: 'automatic' } },
+    payment_method_options: { card: { moto: true } }, // ponytail: MOTO flag tells issuers this is keyed-in phone order, not e-com. Without it Capital One flags fraud.
     metadata: { tx_id: p.txId, agent: p.agentId },
   })
 

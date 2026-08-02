@@ -29,6 +29,8 @@ export async function squareCharge(p: SquareChargeParams): Promise<ChargeResult>
     amountMoney: { amount: BigInt(p.amountCents), currency: 'USD' },
     locationId: p.locationId,
     referenceId: p.txId,
+    // ponytail: MOTO flag — agent keyed card over the phone, not customer-initiated. Fixes Capital One fraud declines.
+    customerDetails: { customerInitiated: false, sellerKeyedIn: true },
   })
 
   const payment = response.payment
