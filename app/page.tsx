@@ -8,45 +8,6 @@ import { Elements, CardElement, useStripe, useElements } from '@stripe/react-str
 
 interface CustomerContext { summary: string; avgOrderCents: number; orderCount: number }
 
-function AiItemParser({ onItems }: { onItems: (items: LineItem[]) => void }) {
-  const [text, setText] = useState('')
-  const [parsing, setParsing] = useState(false)
-  const [error, setError] = useState('')
-
-  async function parse() {
-    if (!text.trim()) return
-    setParsing(true); setError('')
-    try {
-      const res = await fetch('/api/ai', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'parse-items', text }),
-      })
-      const data = await res.json()
-      if (!res.ok || !Array.isArray(data.items)) throw new Error()
-      onItems(data.items.map((i: any) => ({ description: String(i.description), qty: String(i.qty), unitPrice: String(i.unitPrice) })))
-      setText('')
-    } catch { setError('Could not parse — try again or enter manually') }
-    setParsing(false)
-  }
-
-  return (
-    <div className="space-y-1.5">
-      <label className="block text-xs font-medium text-purple-400">AI Item Parser</label>
-      <div className="flex gap-2">
-        <input type="text" value={text} onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), parse())}
-          placeholder='e.g. "3 brake pads at $45, 2 rotors at $120"'
-          className="flex-1 bg-gray-800 border border-purple-900 rounded-lg px-3 py-2 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        <button type="button" onClick={parse} disabled={parsing || !text.trim()}
-          className="px-3 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-sm rounded-lg transition-colors whitespace-nowrap">
-          {parsing ? '...' : 'Parse'}
-        </button>
-      </div>
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-    </div>
-  )
-}
-
 interface Customer {
   id: string; name: string; email?: string; phone?: string; company?: string
 }
@@ -116,7 +77,6 @@ function StripeChargeForm({ customer, accountId, taxRate, customerContext, onSuc
 
   return (
     <form onSubmit={handleCharge} className="space-y-5">
-      <AiItemParser onItems={setItems} />
       <LineItems items={items} onChange={setItems} taxRate={taxRate} taxEnabled={taxEnabled} onTaxToggle={setTaxEnabled} />
       {isAnomalous && (
         <p className="text-yellow-400 text-sm bg-yellow-900/20 border border-yellow-700 rounded-lg px-3 py-2">
@@ -232,7 +192,6 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
 
   return (
     <form onSubmit={handleCharge} className="space-y-5">
-      <AiItemParser onItems={setItems} />
       <LineItems items={items} onChange={setItems} taxRate={taxRate} taxEnabled={taxEnabled} onTaxToggle={setTaxEnabled} />
       {isAnomalous && (
         <p className="text-yellow-400 text-sm bg-yellow-900/20 border border-yellow-700 rounded-lg px-3 py-2">
