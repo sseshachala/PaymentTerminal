@@ -9,24 +9,13 @@ import { squareCharge } from '@/lib/providers/square'
 import { encrypt, encryptMaybe, decrypt, decryptMaybe } from '@/lib/encrypt'
 import { sendSuccessEmails, sendFailureEmails } from '@/lib/email'
 
-const LineItemSchema = z.object({
-  description: z.string().min(1).max(500),
-  qty: z.number().positive(),
-  unitPrice: z.number().positive(),
-})
-
 const ChargeSchema = z.object({
   accountId: z.string().uuid(),
   customerId: z.string().uuid(),
   amountCents: z.number().int().min(100).max(5_000_000),
-  // Stripe
+  note: z.string().max(500).optional(),
   paymentMethodId: z.string().startsWith('pm_').optional(),
-  // Square
   sourceId: z.string().optional(),
-  lineItems: z.array(LineItemSchema).min(1),
-  subtotalCents: z.number().int().min(0),
-  taxRate: z.number().min(0).max(1),
-  taxAmountCents: z.number().int().min(0),
 })
 
 export async function POST(req: NextRequest) {
@@ -37,8 +26,12 @@ export async function POST(req: NextRequest) {
   const parsed = ChargeSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { accountId, customerId, amountCents, paymentMethodId, sourceId,
-    lineItems, subtotalCents, taxRate, taxAmountCents } = parsed.data
+  const { accountId, customerId, amountCents, note, paymentMethodId, sourceId } = parsed.data
+  const description = note?.trim() || 'Payment'
+  const lineItems = [{ description, qty: 1, unitPrice: amountCents / 100 }]
+  const subtotalCents = amountCents
+  const taxRate = 0
+  const taxAmountCents = 0
   const amountDisplay = `$${(amountCents / 100).toFixed(2)}`
   const timestamp = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })
 
@@ -77,9 +70,10 @@ export async function POST(req: NextRequest) {
   // Insert pending transaction
   const txRows = await sql`
     INSERT INTO transactions (customer_id, payment_account_id, amount_cents, provider_tx_id, status, created_by,
-      line_items_enc, subtotal_cents, tax_rate, tax_amount_cents)
+      line_items_enc, subtotal_cents, tax_rate, tax_amount_cents, notes_enc)
     VALUES (${customerId}, ${accountId}, ${amountCents}, 'pending_init', 'pending', ${userId},
-      ${encrypt(JSON.stringify(lineItems))}, ${subtotalCents}, ${taxRate}, ${taxAmountCents})
+      ${encrypt(JSON.stringify(lineItems))}, ${subtotalCents}, ${taxRate}, ${taxAmountCents},
+      ${encryptMaybe(note?.trim() || null)})
     RETURNING id
   ` as any[]
   const txId = txRows[0].id

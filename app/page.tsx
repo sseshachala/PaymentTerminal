@@ -1,12 +1,9 @@
 'use client'
 import AppShell from '@/components/AppShell'
 import CustomerForm, { EMPTY_CUSTOMER, CustomerData } from '@/components/CustomerForm'
-import LineItems, { LineItem, EMPTY_LINE_ITEM, calcTotals } from '@/components/LineItems'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { loadStripe } from '@stripe/stripe-js'
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js'
-
-interface CustomerContext { summary: string; avgOrderCents: number; orderCount: number }
 
 interface Customer {
   id: string; name: string; email?: string; phone?: string; company?: string
@@ -15,28 +12,56 @@ interface Customer {
 interface AccountInfo {
   accountId: string
   name: string
-  location: string
   provider: 'stripe' | 'square'
   remaining: number
-  // stripe
   publishableKey?: string
-  // square
   applicationId?: string
   locationId?: string
   sandbox?: boolean
 }
 
+// ── Amount + note fields (shared) ─────────────────────────────────────────────
+
+function AmountNote({ amount, note, onAmount, onNote }: {
+  amount: string; note: string
+  onAmount: (v: string) => void; onNote: (v: string) => void
+}) {
+  return (
+    <>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">Amount</label>
+        <div className="relative">
+          <span className="absolute left-3 top-3 text-gray-400 text-lg">$</span>
+          <input
+            type="number" inputMode="decimal" step="0.01" min="1" required
+            value={amount} onChange={(e) => onAmount(e.target.value)}
+            placeholder="0.00"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-7 pr-3 py-3 text-white text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">Description / Note</label>
+        <input
+          type="text" value={note} onChange={(e) => onNote(e.target.value)}
+          placeholder="What is this for?"
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+    </>
+  )
+}
+
 // ── Stripe charge form ────────────────────────────────────────────────────────
 
-function StripeChargeForm({ customer, accountId, taxRate, customerContext, onSuccess, onReset }: {
-  customer: Customer; accountId: string; taxRate: number
-  customerContext: CustomerContext | null
+function StripeChargeForm({ customer, accountId, onSuccess, onReset }: {
+  customer: Customer; accountId: string
   onSuccess: (r: any) => void; onReset: () => void
 }) {
   const stripe = useStripe()
   const elements = useElements()
-  const [items, setItems] = useState<LineItem[]>([{ ...EMPTY_LINE_ITEM }])
-  const [taxEnabled, setTaxEnabled] = useState(false)
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -44,8 +69,7 @@ function StripeChargeForm({ customer, accountId, taxRate, customerContext, onSuc
     e.preventDefault()
     if (!stripe || !elements) return
     setError('')
-    const { subtotal, taxAmount, total } = calcTotals(items, taxRate, taxEnabled)
-    const cents = Math.round(total * 100)
+    const cents = Math.round(parseFloat(amount || '0') * 100)
     if (cents < 100) { setError('Minimum amount is $1.00'); return }
     setLoading(true)
     const cardEl = elements.getElement(CardElement)
@@ -56,44 +80,30 @@ function StripeChargeForm({ customer, accountId, taxRate, customerContext, onSuc
     const res = await fetch('/api/payment/charge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        accountId, customerId: customer.id, paymentMethodId: paymentMethod.id,
-        lineItems: items.map(i => ({ description: i.description, qty: parseFloat(i.qty) || 0, unitPrice: parseFloat(i.unitPrice) || 0 })),
-        subtotalCents: Math.round(subtotal * 100),
-        taxRate: taxEnabled ? taxRate : 0,
-        taxAmountCents: Math.round(taxAmount * 100),
-        amountCents: cents,
-      }),
+      body: JSON.stringify({ accountId, customerId: customer.id, paymentMethodId: paymentMethod.id, amountCents: cents, note }),
     })
     const data = await res.json()
     setLoading(false)
     if (!res.ok || !data.success) { setError(data.error ?? 'Charge failed'); return }
-    onSuccess({ ...data, total: total.toFixed(2), customer })
+    onSuccess({ ...data, total: (cents / 100).toFixed(2), customer })
   }
 
-  const { total } = calcTotals(items, taxRate, taxEnabled)
-  const isAnomalous = customerContext && customerContext.orderCount >= 3 &&
-    customerContext.avgOrderCents > 0 && total > (customerContext.avgOrderCents / 100) * 2
+  const cents = Math.round(parseFloat(amount || '0') * 100)
 
   return (
     <form onSubmit={handleCharge} className="space-y-5">
-      <LineItems items={items} onChange={setItems} taxRate={taxRate} taxEnabled={taxEnabled} onTaxToggle={setTaxEnabled} />
-      {isAnomalous && (
-        <p className="text-yellow-400 text-sm bg-yellow-900/20 border border-yellow-700 rounded-lg px-3 py-2">
-          ⚠ This order (${total.toFixed(2)}) is more than 2× the customer&apos;s average (${(customerContext!.avgOrderCents / 100).toFixed(2)}). Confirm before charging.
-        </p>
-      )}
+      <AmountNote amount={amount} note={note} onAmount={setAmount} onNote={setNote} />
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">Card Details</label>
         <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-3 focus-within:ring-2 focus-within:ring-blue-500">
-          <CardElement options={{ style: { base: { fontSize: '16px', color: '#f9fafb', '::placeholder': { color: '#6b7280' }, iconColor: '#9ca3af' }, invalid: { color: '#f87171' } } }} />
+          <CardElement options={{ hidePostalCode: false, style: { base: { fontSize: '16px', color: '#f9fafb', '::placeholder': { color: '#6b7280' }, iconColor: '#9ca3af' }, invalid: { color: '#f87171' } } }} />
         </div>
       </div>
       {error && <p className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>}
       <div className="flex gap-3">
-        <button type="submit" disabled={loading || !stripe || total < 1}
+        <button type="submit" disabled={loading || !stripe || cents < 100}
           className="flex-1 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors text-lg">
-          {loading ? 'Processing...' : total > 0 ? `Charge $${total.toFixed(2)}` : 'Charge'}
+          {loading ? 'Processing...' : cents >= 100 ? `Charge $${(cents / 100).toFixed(2)}` : 'Charge'}
         </button>
         <button type="button" onClick={onReset}
           className="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 transition-colors">
@@ -108,14 +118,13 @@ function StripeChargeForm({ customer, accountId, taxRate, customerContext, onSuc
 
 declare global { interface Window { Square: any } }
 
-function SquareChargeForm({ customer, accountId, applicationId, locationId, sandbox, taxRate, customerContext, onSuccess, onReset }: {
+function SquareChargeForm({ customer, accountId, applicationId, locationId, sandbox, onSuccess, onReset }: {
   customer: Customer; accountId: string
-  applicationId: string; locationId: string; sandbox: boolean; taxRate: number
-  customerContext: CustomerContext | null
+  applicationId: string; locationId: string; sandbox: boolean
   onSuccess: (r: any) => void; onReset: () => void
 }) {
-  const [items, setItems] = useState<LineItem[]>([{ ...EMPTY_LINE_ITEM }])
-  const [taxEnabled, setTaxEnabled] = useState(false)
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [sdkReady, setSdkReady] = useState(false)
@@ -127,12 +136,15 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
       if (!window.Square) return
       try {
         const payments = window.Square.payments(applicationId, locationId)
-        card = await payments.card({ style: {
-          '.input-container': { borderColor: '#374151', borderRadius: '8px' },
-          '.input-container.is-focus': { borderColor: '#3b82f6' },
-          input: { color: '#f9fafb', fontSize: '16px' },
-          'input::placeholder': { color: '#6b7280' },
-        }})
+        card = await payments.card({
+          postalCode: '',
+          style: {
+            '.input-container': { borderColor: '#374151', borderRadius: '8px' },
+            '.input-container.is-focus': { borderColor: '#3b82f6' },
+            input: { color: '#f9fafb', fontSize: '16px' },
+            'input::placeholder': { color: '#6b7280' },
+          },
+        })
         await card.attach('#sq-card')
         cardRef.current = card
         setSdkReady(true)
@@ -141,7 +153,6 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
 
     if (window.Square) { init(); return }
     const script = document.createElement('script')
-    // ponytail: sandbox URL lives in extra.sandbox flag; swap for prod via env if needed
     script.src = sandbox
       ? 'https://sandbox.web.squarecdn.com/v1/square.js'
       : 'https://web.squarecdn.com/v1/square.js'
@@ -150,14 +161,13 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
     document.head.appendChild(script)
 
     return () => { card?.destroy?.() }
-  }, [applicationId, locationId])
+  }, [applicationId, locationId, sandbox])
 
   async function handleCharge(e: React.FormEvent) {
     e.preventDefault()
     if (!cardRef.current || !sdkReady) return
     setError('')
-    const { subtotal, taxAmount, total } = calcTotals(items, taxRate, taxEnabled)
-    const cents = Math.round(total * 100)
+    const cents = Math.round(parseFloat(amount || '0') * 100)
     if (cents < 100) { setError('Minimum amount is $1.00'); return }
     setLoading(true)
 
@@ -171,33 +181,19 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
     const res = await fetch('/api/payment/charge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        accountId, customerId: customer.id, sourceId: result.token,
-        lineItems: items.map(i => ({ description: i.description, qty: parseFloat(i.qty) || 0, unitPrice: parseFloat(i.unitPrice) || 0 })),
-        subtotalCents: Math.round(subtotal * 100),
-        taxRate: taxEnabled ? taxRate : 0,
-        taxAmountCents: Math.round(taxAmount * 100),
-        amountCents: cents,
-      }),
+      body: JSON.stringify({ accountId, customerId: customer.id, sourceId: result.token, amountCents: cents, note }),
     })
     const data = await res.json()
     setLoading(false)
     if (!res.ok || !data.success) { setError(data.error ?? 'Charge failed'); return }
-    onSuccess({ ...data, total: total.toFixed(2), customer })
+    onSuccess({ ...data, total: (cents / 100).toFixed(2), customer })
   }
 
-  const { total } = calcTotals(items, taxRate, taxEnabled)
-  const isAnomalous = customerContext && customerContext.orderCount >= 3 &&
-    customerContext.avgOrderCents > 0 && total > (customerContext.avgOrderCents / 100) * 2
+  const cents = Math.round(parseFloat(amount || '0') * 100)
 
   return (
     <form onSubmit={handleCharge} className="space-y-5">
-      <LineItems items={items} onChange={setItems} taxRate={taxRate} taxEnabled={taxEnabled} onTaxToggle={setTaxEnabled} />
-      {isAnomalous && (
-        <p className="text-yellow-400 text-sm bg-yellow-900/20 border border-yellow-700 rounded-lg px-3 py-2">
-          ⚠ This order (${total.toFixed(2)}) is more than 2× the customer&apos;s average (${(customerContext!.avgOrderCents / 100).toFixed(2)}). Confirm before charging.
-        </p>
-      )}
+      <AmountNote amount={amount} note={note} onAmount={setAmount} onNote={setNote} />
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">Card Details</label>
         <div id="sq-card" className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-3 min-h-[48px]" />
@@ -205,9 +201,9 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
       </div>
       {error && <p className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>}
       <div className="flex gap-3">
-        <button type="submit" disabled={loading || !sdkReady || total < 1}
+        <button type="submit" disabled={loading || !sdkReady || cents < 100}
           className="flex-1 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors text-lg">
-          {loading ? 'Processing...' : total > 0 ? `Charge $${total.toFixed(2)}` : 'Charge'}
+          {loading ? 'Processing...' : cents >= 100 ? `Charge $${(cents / 100).toFixed(2)}` : 'Charge'}
         </button>
         <button type="button" onClick={onReset}
           className="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 transition-colors">
@@ -225,7 +221,6 @@ function Terminal() {
   const [searchResults, setSearchResults] = useState<Customer[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [availableAccounts, setAvailableAccounts] = useState<AccountInfo[]>([])
-  const [selectedLocation, setSelectedLocation] = useState<string | null>(null)
   const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null)
   const [stripePromise, setStripePromise] = useState<ReturnType<typeof loadStripe> | null>(null)
   const [success, setSuccess] = useState<any>(null)
@@ -236,13 +231,7 @@ function Terminal() {
   const [newCustomer, setNewCustomer] = useState<CustomerData>(EMPTY_CUSTOMER)
   const [creatingCustomer, setCreatingCustomer] = useState(false)
   const [createError, setCreateError] = useState('')
-  const [taxRate, setTaxRate] = useState(0.0825)
-  const [customerContext, setCustomerContext] = useState<CustomerContext | null>(null)
   const searchTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
-
-  useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(d => { if (d.tax_rate) setTaxRate(parseFloat(d.tax_rate)) })
-  }, [])
 
   const doSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return }
@@ -261,27 +250,15 @@ function Terminal() {
   async function initPayment(customer: Customer) {
     setSelectedCustomer(customer)
     setAccountError('')
-    setCustomerContext(null)
     setAvailableAccounts([])
-    setSelectedLocation(null)
     setAccountInfo(null)
     setStripePromise(null)
     setLoadingAccount(true)
-    const [res, ctxRes] = await Promise.all([
-      fetch('/api/payment/init'),
-      fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'customer-context', customerId: customer.id }) }),
-    ])
+    const res = await fetch('/api/payment/init')
     const data = await res.json()
     setLoadingAccount(false)
-    ctxRes.json().then(setCustomerContext).catch(() => {})
     if (!res.ok) { setAccountError(data.error); return }
     setAvailableAccounts(data.accounts)
-  }
-
-  function pickLocation(loc: string) {
-    setSelectedLocation(loc)
-    const inLoc = availableAccounts.filter(a => a.location === loc)
-    if (inLoc.length === 1) pickAccount(inLoc[0])
   }
 
   function pickAccount(a: AccountInfo) {
@@ -305,9 +282,9 @@ function Terminal() {
   }
 
   function reset() {
-    setSelectedCustomer(null); setAvailableAccounts([]); setSelectedLocation(null)
+    setSelectedCustomer(null); setAvailableAccounts([])
     setAccountInfo(null); setStripePromise(null)
-    setSuccess(null); setSearch(''); setSearchResults([]); setCustomerContext(null)
+    setSuccess(null); setSearch(''); setSearchResults([])
   }
 
   if (success) {
@@ -384,50 +361,28 @@ function Terminal() {
         </div>
       )}
 
-      {selectedCustomer && (() => {
-        const locations = Array.from(new Set(availableAccounts.map(a => a.location)))
-        const inLoc = selectedLocation ? availableAccounts.filter(a => a.location === selectedLocation) : []
-        const stage = accountInfo ? 'card' : selectedLocation ? 'provider' : 'location'
-        const stepLabel = stage === 'card' ? 'Step 4 — Charge Card'
-          : stage === 'provider' ? 'Step 3 — Select Provider'
-          : 'Step 2 — Select Location'
-        return (
+      {selectedCustomer && (
         <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{stepLabel}</h3>
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              {accountInfo ? 'Step 3 — Charge Card' : 'Step 2 — Select Account'}
+            </h3>
             <button onClick={reset} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Change customer</button>
           </div>
           <div className="bg-gray-800 rounded-lg px-4 py-3 mb-5">
             <p className="text-white font-medium">{selectedCustomer.name}</p>
             {selectedCustomer.company && <p className="text-gray-400 text-sm">{selectedCustomer.company}</p>}
-            {customerContext && (
-              <p className="text-purple-400 text-xs mt-1">{customerContext.summary}</p>
-            )}
           </div>
           {loadingAccount && <p className="text-gray-400 text-sm">Loading payment accounts...</p>}
           {accountError && <p className="text-red-400 text-sm">{accountError}</p>}
 
-          {stage === 'location' && locations.length > 0 && (
-            <div className="grid grid-cols-2 gap-3">
-              {locations.map((loc) => (
-                <button key={loc} type="button" onClick={() => pickLocation(loc)}
-                  className="px-4 py-6 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors text-center">
-                  <p className="text-white font-semibold text-lg">{loc}</p>
-                  <p className="text-gray-400 text-xs mt-1">
-                    {availableAccounts.filter(a => a.location === loc).length} account(s)
-                  </p>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {stage === 'provider' && (
+          {!accountInfo && availableAccounts.length > 0 && (
             <div className="space-y-2">
-              {inLoc.map((a) => (
+              {availableAccounts.map((a) => (
                 <button key={a.accountId} type="button" onClick={() => pickAccount(a)}
                   className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors flex items-center justify-between">
                   <div>
-                    <p className="text-white font-medium capitalize">{a.provider} <span className="text-gray-500">·</span> <span className="text-gray-300">{a.name}</span></p>
+                    <p className="text-white font-medium">{a.name}</p>
                     <p className="text-gray-400 text-xs mt-0.5">Remaining today: ${(a.remaining / 100).toFixed(2)}</p>
                   </div>
                   <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium capitalize ${
@@ -435,15 +390,13 @@ function Terminal() {
                   }`}>{a.provider}</span>
                 </button>
               ))}
-              <button onClick={() => setSelectedLocation(null)}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors mt-2">← Change location</button>
             </div>
           )}
 
-          {stage === 'card' && accountInfo && (
+          {accountInfo && (
             <div className="mb-4 flex items-center justify-between text-xs">
-              <span className="text-gray-400">Using <span className="text-white">{accountInfo.location} · {accountInfo.name}</span> ({accountInfo.provider})</span>
-              <button onClick={() => { setAccountInfo(null); setStripePromise(null); if (inLoc.length <= 1) setSelectedLocation(null) }}
+              <span className="text-gray-400">Using <span className="text-white">{accountInfo.name}</span></span>
+              <button onClick={() => { setAccountInfo(null); setStripePromise(null) }}
                 className="text-gray-500 hover:text-gray-300 transition-colors">Change</button>
             </div>
           )}
@@ -451,7 +404,7 @@ function Terminal() {
           {accountInfo?.provider === 'stripe' && stripePromise && (
             <Elements stripe={stripePromise}>
               <StripeChargeForm customer={selectedCustomer} accountId={accountInfo.accountId}
-                taxRate={taxRate} customerContext={customerContext} onSuccess={setSuccess} onReset={reset} />
+                onSuccess={setSuccess} onReset={reset} />
             </Elements>
           )}
 
@@ -459,11 +412,10 @@ function Terminal() {
             <SquareChargeForm customer={selectedCustomer} accountId={accountInfo.accountId}
               applicationId={accountInfo.applicationId} locationId={accountInfo.locationId}
               sandbox={accountInfo.sandbox ?? false}
-              taxRate={taxRate} customerContext={customerContext} onSuccess={setSuccess} onReset={reset} />
+              onSuccess={setSuccess} onReset={reset} />
           )}
         </div>
-        )
-      })()}
+      )}
     </div>
   )
 }
