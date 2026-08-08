@@ -137,7 +137,6 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
       try {
         const payments = window.Square.payments(applicationId, locationId)
         card = await payments.card({
-          postalCode: '',
           style: {
             '.input-container': { borderColor: '#374151', borderRadius: '8px' },
             '.input-container.is-focus': { borderColor: '#3b82f6' },

@@ -21,7 +21,7 @@ export default withAuth(
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' https://js.stripe.com https://maps.googleapis.com https://web.squarecdn.com https://sandbox.web.squarecdn.com",
         "frame-src https://js.stripe.com https://web.squarecdn.com https://sandbox.web.squarecdn.com",
-        "connect-src 'self' https://api.stripe.com https://maps.googleapis.com https://maps.gstatic.com https://connect.squareapis.com https://pci-connect.squareapis.com",
+        "connect-src 'self' https://api.stripe.com https://maps.googleapis.com https://maps.gstatic.com https://connect.squareup.com https://pci-connect.squareup.com https://connect.squareupsandbox.com https://pci-connect.squareupsandbox.com",
         "img-src 'self' data: https: https://maps.gstatic.com https://maps.googleapis.com",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self'",
