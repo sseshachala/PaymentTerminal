@@ -104,8 +104,17 @@ export async function POST(req: NextRequest) {
         ${encrypt(JSON.stringify({ error: err.message, accountId, provider: creds.provider }))},
         ${req.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown'})
     `
-    sendFailureEmails({ customerName, agentEmail, amountDisplay, transactionId: txId, timestamp, error: err.message, lineItems }).catch(() => {})
-    return NextResponse.json({ error: err.message }, { status: 402 })
+    const providerErrors = err?.errors ?? err?.body?.errors ?? err?.result?.errors
+    const detail = providerErrors?.[0]?.detail ?? providerErrors?.[0]?.message ?? err?.message ?? 'Charge failed'
+    const code = providerErrors?.[0]?.code
+    const friendly = code === 'CVV_FAILURE' ? 'Card declined: security code (CVV) rejected. Please re-check and retry.'
+      : code === 'ADDRESS_VERIFICATION_FAILURE' ? 'Card declined: billing ZIP mismatch.'
+      : code === 'CARD_DECLINED' ? 'Card declined by issuer.'
+      : code === 'INSUFFICIENT_FUNDS' ? 'Card declined: insufficient funds.'
+      : code === 'CARD_EXPIRED' ? 'Card declined: expired.'
+      : detail
+    sendFailureEmails({ customerName, agentEmail, amountDisplay, transactionId: txId, timestamp, error: friendly, lineItems }).catch(() => {})
+    return NextResponse.json({ error: friendly, code }, { status: 402 })
   }
 
   await sql`
