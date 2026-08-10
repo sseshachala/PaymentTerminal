@@ -131,6 +131,13 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
   const cardRef = useRef<any>(null)
 
   useEffect(() => {
+    // ponytail: app-id/env mismatch is Square's #1 cause of "unexpected error while using Card".
+    const isSandboxId = applicationId.startsWith('sandbox-')
+    if (isSandboxId !== sandbox) {
+      setError(`Application ID ${isSandboxId ? 'is sandbox' : 'is production'} but account is marked ${sandbox ? 'sandbox' : 'production'}. Fix in Admin.`)
+      return
+    }
+
     let card: any
     async function init() {
       if (!window.Square) return
@@ -147,7 +154,11 @@ function SquareChargeForm({ customer, accountId, applicationId, locationId, sand
         await card.attach('#sq-card')
         cardRef.current = card
         setSdkReady(true)
-      } catch (e: any) { setError(e.message) }
+      } catch (e: any) {
+        console.error('Square card init failed:', e)
+        const detail = e?.errors?.[0]?.message ?? e?.errors?.[0]?.detail ?? e?.message ?? 'Unknown error'
+        setError(`Square: ${detail}${e?.errors?.[0]?.code ? ` (${e.errors[0].code})` : ''}`)
+      }
     }
 
     if (window.Square) { init(); return }
